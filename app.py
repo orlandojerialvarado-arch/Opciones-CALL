@@ -5,6 +5,28 @@ import plotly.express as px
 import joblib
 import os
 
+def consultar_llama3(prompt_sistema, prompt_usuario):
+    api_key = st.secrets.get("GROQ_API_KEY", None)
+    if not api_key:
+        st.warning("No se encontró la clave GROQ_API_KEY en Secrets.")
+        return None
+    try:
+        from groq import Groq
+        cliente = Groq(api_key=api_key.strip())
+        respuesta = cliente.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": prompt_sistema},
+                {"role": "user", "content": prompt_usuario}
+            ],
+            temperature=0.2,
+            max_tokens=450
+        )
+        return respuesta.choices[0].message.content
+    except Exception as e:
+        st.error(f"Detalle de conexión con Groq: {e}")
+        return None
+        
 # Configuración visua
 st.set_page_config(page_title="Sistema Analítico de Opciones CALL", layout="wide", page_icon="📈")
 
