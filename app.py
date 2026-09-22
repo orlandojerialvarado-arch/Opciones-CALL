@@ -6,13 +6,13 @@ import joblib
 import os
 
 def consultar_llama3(prompt_sistema, prompt_usuario):
-    api_key = st.secrets.get("GROQ_API_KEY", None)
-    if not api_key:
-        st.warning("No se encontró la clave GROQ_API_KEY en Secrets.")
+    if "GROQ_API_KEY" not in st.secrets:
+        st.error("⚠️ Error: No se encontró la variable GROQ_API_KEY en los Secrets de Streamlit.")
         return None
     try:
         from groq import Groq
-        cliente = Groq(api_key=api_key.strip())
+        clave = str(st.secrets["GROQ_API_KEY"]).strip().replace('"', '').replace("'", "")
+        cliente = Groq(api_key=clave)
         respuesta = cliente.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
@@ -23,8 +23,11 @@ def consultar_llama3(prompt_sistema, prompt_usuario):
             max_tokens=450
         )
         return respuesta.choices[0].message.content
+    except ImportError:
+        st.error("⚠️ Error: La librería 'groq' no está instalada en Streamlit")
+        return None
     except Exception as e:
-        st.error(f"Detalle de conexión con Groq: {e}")
+        st.error(f"⚠️ Error al conectar con Groq: {e}")
         return None
         
 # Configuración visua
