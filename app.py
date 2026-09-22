@@ -25,23 +25,18 @@ def consultar_llama3(prompt_sistema, prompt_usuario):
         clave = str(st.secrets["GROQ_API_KEY"]).strip()
         cliente = Groq(api_key=clave)
         
-        # Lista de modelos de chat activos probados en orden
         modelos_prioritarios = [
             "llama-3.3-70b-versatile",
             "llama-3.1-70b-versatile",
             "llama-3.1-8b-instant",
-            "gemma2-9b-it",
-            "mixtral-8x7b-32768"
+            "gemma2-9b-it"
         ]
         
-        # Obtener IDs reales de la cuenta excluyendo audio y moderación
         lista_raw = cliente.models.list().data
         modelos_chat = [
             m.id for m in lista_raw 
             if not any(x in m.id.lower() for x in ["whisper", "guard", "embed", "safeguard"])
         ]
-        
-        # Priorizar lista conocida o tomar el primer modelo de texto disponible
         candidatos = [m for m in modelos_prioritarios if m in modelos_chat] + modelos_chat
         
         if not candidatos:
@@ -49,7 +44,7 @@ def consultar_llama3(prompt_sistema, prompt_usuario):
             return None
 
         ultimo_error = None
-        for mod in dict.fromkeys(candidatos):  # elimina duplicados preservando orden
+        for mod in dict.fromkeys(candidatos):
             try:
                 respuesta = cliente.chat.completions.create(
                     model=mod,
@@ -57,20 +52,17 @@ def consultar_llama3(prompt_sistema, prompt_usuario):
                         {"role": "system", "content": prompt_sistema},
                         {"role": "user", "content": prompt_usuario}
                     ],
-                    temperature=0.2,
-                    max_tokens=450
+                    temperature=0.1,
+                    max_tokens=650
                 )
                 return respuesta.choices[0].message.content
             except Exception as err:
                 ultimo_error = err
                 continue
 
-        st.error(f"Error con los modelos de chat disponibles: {ultimo_error}")
+        st.error(f"Error con los modelos: {ultimo_error}")
         return None
 
-    except ImportError:
-        st.error("Librería 'groq' no instalada. Revisa requirements.txt.")
-        return None
     except Exception as e:
         st.error(f"Error al conectar con Groq: {e}")
         return None
@@ -179,36 +171,22 @@ if archivo_cargado is not None:
     tab1, tab2, tab3 = st.tabs(["01. Análisis Descriptivo", "02. Análisis Predictivo", "03. Análisis Prescriptivo"])
 
     # --- TAB 1: DESCRIPTIVO ---
-    with tab1:
-        st.markdown("#### Panorama General del Mercado")
-        d1, d2, d3, d4 = st.columns(4)
-        total_c = len(df_filtrado)
-        prima_p = df_filtrado['PREMIUM'].mean()
-        vol_t = df_filtrado['C_VOLUME'].sum()
-        iv_p = df_filtrado['C_IV'].mean() * 100
-
-        d1.metric("Total Contratos", f"{total_c:,}")
-        d2.metric("Prima Promedio", f"${prima_p:.2f}")
-        d3.metric("Volumen Total", f"{vol_t:,.0f}")
-        d4.metric("Volatilidad Implícita Prom.", f"{iv_p:.2f}%")
-
-        col_g1, col_g2 = st.columns(2)
-        with col_g1:
-            vol_por_strike = df_filtrado.groupby("STRIKE")["C_VOLUME"].sum().reset_index()
-            strike_max = vol_por_strike.sort_values(by="C_VOLUME", ascending=False).iloc[0]["STRIKE"] if len(vol_por_strike) > 0 else 0
-            fig_v = px.bar(vol_por_strike, x="C_VOLUME", y="STRIKE", orientation="h", title="Concentración de Liquidez por Strike ($)", color_discrete_sequence=["#0284c7"])
-            st.plotly_chart(fig_v, width="stretch")
-        with col_g2:
-            n_samples = min(1200, len(df_filtrado))
-            muestra = df_filtrado.sample(n_samples) if n_samples > 0 else df_filtrado
-            fig_s = px.scatter(muestra, x="MONEYNESS", y="C_IV", color="SIGNAL_REAL", title="Estructura de Volatilidad (IV) vs Moneyness")
-            st.plotly_chart(fig_s, width="stretch")
-
-        with st.expander("🤖 Interpretación Ejecutiva con Llama 3", expanded=True):
+   with st.expander("🤖 Interpretación Ejecutiva con Llama 3", expanded=True):
             if st.button("Generar Diagnóstico Descriptivo"):
                 with st.spinner("Consultando Llama 3..."):
-                    prompt_s = "Eres un analista cuantitativo senior. Devuelve exactamente 2 viñetas concisas y directas analizando liquidez y volatilidad."
-                    prompt_u = f"AAPL CALL: Total={total_c}, Prima prom=${prima_p:.2f}, Vol total={vol_t:,.0f}, IV prom={iv_p:.2f}%, Strike con mayor vol=${strike_max:.2f}. Explica la implicación institucional."
+                    prompt_s = (
+                        "Eres un analista cuantitativo senior de derivados financieros. "
+                        "Tu respuesta DEBE seguir estrictamente esta estructura de 3 partes:\n"
+                        "1. Liquidez y Concentración: (análisis breve en 1-2 oraciones)\n"
+                        "2. Volatilidad y Costo de Entrada: (análisis breve en 1-2 oraciones)\n"
+                        "**Conclusión Ejecutiva:** (una sola línea final directa con la lectura del mercado)."
+                    )
+                    prompt_u = (
+                        f"Datos de opciones CALL de AAPL: Total contratos evaluados: {total_c:,}, "
+                        f"Prima promedio: ${prima_p:.2f}, Volumen acumulado: {vol_t:,.0f}, "
+                        f"IV promedio: {iv_p:.2f}%, Strike con mayor liquidez institucional: ${strike_max:.2f}. "
+                        "Genera el diagnóstico institucional siguiendo el formato requerido."
+                    )
                     analisis = consultar_llama3(prompt_s, prompt_u)
                     if analisis:
                         st.markdown(analisis)
@@ -216,40 +194,24 @@ if archivo_cargado is not None:
                 st.caption("Haz clic en el botón para solicitar el análisis en vivo a Llama 3.")
 
     # --- TAB 2: PREDICTIVO ---
-    with tab2:
-        st.markdown("#### Rendimiento del Algoritmo de Clasificación")
-        tp = len(df_filtrado[(df_filtrado['SENAL_MODELO'] == 'Comprar') & (df_filtrado['SIGNAL_REAL'] == 'Comprar')])
-        fp = len(df_filtrado[(df_filtrado['SENAL_MODELO'] == 'Comprar') & (df_filtrado['SIGNAL_REAL'] == 'No comprar')])
-        tn = len(df_filtrado[(df_filtrado['SENAL_MODELO'] == 'No comprar') & (df_filtrado['SIGNAL_REAL'] == 'No comprar')])
-        fn = len(df_filtrado[(df_filtrado['SENAL_MODELO'] == 'No comprar') & (df_filtrado['SIGNAL_REAL'] == 'Comprar')])
-        total_p = len(df_filtrado)
-        accuracy = (tp + tn) / total_p if total_p > 0 else 0
-
-        p1, p2, p3, p4 = st.columns(4)
-        p1.metric("Precisión Global (Accuracy)", f"{accuracy * 100:.2f}%")
-        p2.metric("Alertas de Compra Generadas", f"{(tp + fp):,}")
-        p3.metric("Aciertos Validados (TP)", f"{tp:,}")
-        p4.metric("Confianza Promedio", f"{df_filtrado['PROBABILIDAD_COMPRA'].mean() * 100:.2f}%")
-
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            st.write("##### Matriz de Confusión")
-            matriz_data = pd.DataFrame({
-                "Predicho: Comprar": [tp, fp],
-                "Predicho: No comprar": [fn, tn]
-            }, index=["Real: Comprar", "Real: No comprar"])
-            st.dataframe(matriz_data, width="stretch")
-        with col_m2:
-            df_filtrado["RANGO_CONF"] = pd.cut(df_filtrado["PROBABILIDAD_COMPRA"], bins=[0, 0.5, 0.6, 0.7, 0.8, 1.0], labels=["< 50%", "50% - 60%", "60% - 70%", "70% - 80%", "80% - 100%"])
-            pnl_conf = df_filtrado.groupby("RANGO_CONF", observed=False)["PNL_PER_SHARE"].mean().reset_index()
-            fig_conf = px.bar(pnl_conf, x="RANGO_CONF", y="PNL_PER_SHARE", title="Retorno Promedio según Nivel de Confianza ($)", color_discrete_sequence=["#0284c7"])
-            st.plotly_chart(fig_conf, width="stretch")
-
-        with st.expander("🤖 Interpretación Ejecutiva con Llama 3", expanded=True):
+    with st.expander("🤖 Interpretación Ejecutiva con Llama 3", expanded=True):
             if st.button("Generar Diagnóstico Predictivo"):
                 with st.spinner("Consultando Llama 3..."):
-                    prompt_s = "Eres especialista en ML aplicado a finanzas. Explica el balance entre falsos positivos y aciertos en 2 viñetas concisas."
-                    prompt_u = f"Accuracy={accuracy*100:.2f}%, Alertas={tp+fp}, TP={tp}, TN={tn}, FP={fp}, Umbral={int(umbral_corte*100)}%. Resume el valor predictivo y el filtrado de pérdidas."
+                    prompt_s = (
+                        "Eres un especialista en Machine Learning aplicado a finanzas institucionales. "
+                        "No expliques conceptos básicos como qué es TP o TN. Ve directo al valor operativo. "
+                        "Tu respuesta DEBE seguir estrictamente esta estructura:\n"
+                        "1. Filtrado Defensivo y Mitigación de Pérdidas: (1-2 oraciones sobre los contratos descartados)\n"
+                        "2. Calidad de Alertas y Retorno por Certeza: (1-2 oraciones sobre los aciertos y el umbral)\n"
+                        "**Conclusión Ejecutiva:** (una sola línea final directa sobre la confiabilidad del modelo)."
+                    )
+                    prompt_u = (
+                        f"Métricas del modelo de clasificación CALL: Accuracy global: {accuracy*100:.2f}%, "
+                        f"Alertas de compra generadas: {tp+fp:,}, Aciertos validados (TP): {tp:,}, "
+                        f"Contratos de pérdida descartados exitosamente (TN): {tn:,}, "
+                        f"Falsos positivos: {fp:,}, Umbral de decisión configurado: {int(umbral_corte*100)}%. "
+                        "Genera el análisis de rendimiento siguiendo el formato."
+                    )
                     analisis = consultar_llama3(prompt_s, prompt_u)
                     if analisis:
                         st.markdown(analisis)
@@ -257,38 +219,22 @@ if archivo_cargado is not None:
                 st.caption("Haz clic en el botón para evaluar la capacidad predictiva con Llama 3.")
 
     # --- TAB 3: PRESCRIPTIVO ---
-    with tab3:
-        st.markdown("#### Reglas Prescriptivas y Resultados Financieros")
-        compras = df_filtrado[df_filtrado["SENAL_MODELO"] == "Comprar"]
-        pnl_tot = compras["PNL_PER_SHARE"].sum() * 100
-        pnl_unit = compras["PNL_PER_SHARE"].mean() if len(compras) > 0 else 0
-        win_r = (len(compras[compras["PNL_PER_SHARE"] > 0]) / len(compras) * 100) if len(compras) > 0 else 0
-        cap_req = compras["PREMIUM"].sum() * 100
-
-        pr1, pr2, pr3, pr4 = st.columns(4)
-        pr1.metric("PnL Total Estimado", f"${pnl_tot:,.2f}")
-        pr2.metric("PnL Promedio Contrato", f"${pnl_unit:.2f}")
-        pr3.metric("Tasa de Ganancia (Win Rate)", f"{win_r:.2f}%")
-        pr4.metric("Capital Requerido", f"${cap_req:,.0f}")
-
-        def clasificar_vencimiento(d):
-            if d <= 15: return "01. Corto (<= 15 d)"
-            elif d <= 30: return "02. Medio-Corto (16-30 d)"
-            elif d <= 60: return "03. Medio (31-60 d)"
-            else: return "04. Largo (> 60 d)"
-
-        df_filtrado["TRAMO_DTE"] = df_filtrado["DTE"].apply(clasificar_vencimiento)
-        resumen_dte = df_filtrado[df_filtrado["SENAL_MODELO"] == "Comprar"].groupby("TRAMO_DTE")["PNL_PER_SHARE"].sum() * 100
-        tabla_dte = resumen_dte.reset_index().rename(columns={"TRAMO_DTE": "Rango Vencimiento (DTE)", "PNL_PER_SHARE": "PnL Acumulado ($)"})
-
-        st.write("##### Rendimiento por Rango de Vencimiento")
-        st.dataframe(tabla_dte, width="stretch")
-
-        with st.expander("🤖 Decisión Prescriptiva con Llama 3", expanded=True):
+    with st.expander("🤖 Decisión Prescriptiva con Llama 3", expanded=True):
             if st.button("Generar Regla de Trading Prescriptiva"):
                 with st.spinner("Llama 3 sintetizando la política de inversión..."):
-                    prompt_s = "Eres CIO de un fondo cuantitativo. Define la política de inversión en 2 reglas directas y ejecutivas."
-                    prompt_u = f"Estrategia AAPL: PnL=${pnl_tot:,.2f}, Win Rate={win_r:.2f}%. En 31-60 DTE se pierden -$494k por Theta decay acelerado; <=15d y >60d son muy rentables. Establece las reglas prescriptivas de capital."
+                    prompt_s = (
+                        "Eres el Chief Investment Officer (CIO) de un fondo cuantitativo. "
+                        "Tu respuesta DEBE seguir estrictamente esta estructura:\n"
+                        "1. Regla de Exclusión por Theta Decay: (directriz imperativa sobre el tramo perdedor 31-60 DTE)\n"
+                        "2. Asignación de Capital Favorable: (directriz sobre contratos <=15d y >60d)\n"
+                        "**Conclusión Ejecutiva:** (una sola línea final directa resumiendo la orden de operación)."
+                    )
+                    prompt_u = (
+                        f"Estrategia sobre opciones CALL de AAPL: PnL acumulado: ${pnl_tot:,.2f}, Win Rate: {win_r:.2f}%. "
+                        "Desglose por vencimiento: Tramo crítico de 31 a 60 DTE destruye -$494k USD por Theta decay acelerado; "
+                        "mientras que tramos <=15 días y >60 días generan los retornos positivos de la cartera. "
+                        "Establece las directrices y la conclusión ejecutiva."
+                    )
                     analisis = consultar_llama3(prompt_s, prompt_u)
                     if analisis:
                         st.markdown(analisis)
