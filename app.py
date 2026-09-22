@@ -5,7 +5,7 @@ import plotly.express as px
 import joblib
 import os
 
-# Configuración visual
+# Configuración visua
 st.set_page_config(page_title="Sistema Analítico de Opciones CALL", layout="wide", page_icon="📈")
 
 # Banner superior
