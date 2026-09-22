@@ -7,11 +7,11 @@ import os
 
 def consultar_llama3(prompt_sistema, prompt_usuario):
     if "GROQ_API_KEY" not in st.secrets:
-        st.error("⚠️ Error: No se encontró la variable GROQ_API_KEY en los Secrets de Streamlit.")
+        st.error("⚠️ No se encontró GROQ_API_KEY en Secrets.")
         return None
     try:
         from groq import Groq
-        clave = str(st.secrets["GROQ_API_KEY"]).strip().replace('"', '').replace("'", "")
+        clave = str(st.secrets["GROQ_API_KEY"]).strip()
         cliente = Groq(api_key=clave)
         respuesta = cliente.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -24,10 +24,10 @@ def consultar_llama3(prompt_sistema, prompt_usuario):
         )
         return respuesta.choices[0].message.content
     except ImportError:
-        st.error("⚠️ Error: La librería 'groq' no está instalada en Streamlit")
+        st.error("⚠️ Librería 'groq' no instalada en el contenedor.")
         return None
     except Exception as e:
-        st.error(f"⚠️ Error al conectar con Groq: {e}")
+        st.error(f"⚠️ Error de Groq: {e}")
         return None
         
 # Configuración visua
