@@ -16,6 +16,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # 1. Función de consulta a Llama 3
+# 1. Función de consulta a LLM vía Groq con fallback de modelos
 def consultar_llama3(prompt_sistema, prompt_usuario):
     if "GROQ_API_KEY" not in st.secrets:
         st.error("No se encontró GROQ_API_KEY en Secrets.")
@@ -24,16 +25,36 @@ def consultar_llama3(prompt_sistema, prompt_usuario):
         from groq import Groq
         clave = str(st.secrets["GROQ_API_KEY"]).strip()
         cliente = Groq(api_key=clave)
-        respuesta = cliente.chat.completions.create(
-            model="llama-3.1-8b-instant",
-            messages=[
-                {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": prompt_usuario}
-            ],
-            temperature=0.2,
-            max_tokens=450
-        )
-        return respuesta.choices[0].message.content
+        
+        # Lista ordenada de modelos disponibles en Groq
+        modelos_a_probar = [
+            "llama3-70b-8192",
+            "llama3-8b-8192",
+            "gemma2-9b-it",
+            "mixtral-8x7b-32768"
+        ]
+        
+        for mod in modelos_a_probar:
+            try:
+                respuesta = cliente.chat.completions.create(
+                    model=mod,
+                    messages=[
+                        {"role": "system", "content": prompt_sistema},
+                        {"role": "user", "content": prompt_usuario}
+                    ],
+                    temperature=0.2,
+                    max_tokens=450
+                )
+                return respuesta.choices[0].message.content
+            except Exception as err:
+                if "model_not_found" in str(err) or "does not exist" in str(err):
+                    continue
+                else:
+                    raise err
+        
+        st.error("No se encontró ningún modelo compatible habilitado en la cuenta de Groq.")
+        return None
+
     except ImportError:
         st.error("Librería 'groq' no instalada. Revisa requirements.txt.")
         return None
