@@ -5,9 +5,20 @@ import plotly.express as px
 import joblib
 import os
 
+# Configuración de página
+st.set_page_config(page_title="Sistema Analítico de Opciones CALL", layout="wide", page_icon="📈")
+
+# Banner institucional
+st.markdown("""
+<div style="background-color: #1e2a4a; padding: 18px; border-radius: 6px; text-align: center; margin-bottom: 20px;">
+    <h2 style="color: white; margin: 0; font-weight: 700; letter-spacing: 0.04em;">BOT INVERSIÓN EN OPCIONES CALL</h2>
+</div>
+""", unsafe_allow_html=True)
+
+# 1. Función de consulta a Llama 3
 def consultar_llama3(prompt_sistema, prompt_usuario):
     if "GROQ_API_KEY" not in st.secrets:
-        st.error("⚠️ No se encontró GROQ_API_KEY en Secrets.")
+        st.error("No se encontró GROQ_API_KEY en Secrets.")
         return None
     try:
         from groq import Groq
@@ -24,23 +35,13 @@ def consultar_llama3(prompt_sistema, prompt_usuario):
         )
         return respuesta.choices[0].message.content
     except ImportError:
-        st.error("⚠️ Librería 'groq' no instalada en el contenedor.")
+        st.error("Librería 'groq' no instalada. Revisa requirements.txt.")
         return None
     except Exception as e:
-        st.error(f"⚠️ Error de Groq: {e}")
+        st.error(f"Error al conectar con Groq: {e}")
         return None
-        
-# Configuración visua
-st.set_page_config(page_title="Sistema Analítico de Opciones CALL", layout="wide", page_icon="📈")
 
-# Banner superior
-st.markdown("""
-<div style="background-color: #1e2a4a; padding: 18px; border-radius: 6px; text-align: center; margin-bottom: 20px;">
-    <h2 style="color: white; margin: 0; font-weight: 700; letter-spacing: 0.04em;">BOT INVERSIÓN EN OPCIONES CALL</h2>
-</div>
-""", unsafe_allow_html=True)
-
-# 1. Carga del Modelo Serializado
+# 2. Carga del Modelo Serializado
 MODEL_FILE = "mejor_modelo_aapl_call.pkl"
 
 @st.cache_resource
@@ -51,28 +52,7 @@ def obtener_modelo():
 
 modelo = obtener_modelo()
 
-# Función para consultar Llama 3 vía Groq
-def consultar_llama3(prompt_sistema, prompt_usuario):
-    api_key = st.secrets.get("GROQ_API_KEY", None)
-    if not api_key:
-        return None
-    try:
-        from groq import Groq
-        cliente = Groq(api_key=api_key)
-        respuesta = cliente.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": prompt_sistema},
-                {"role": "user", "content": prompt_usuario}
-            ],
-            temperature=0.2,
-            max_tokens=450
-        )
-        return respuesta.choices[0].message.content
-    except Exception as e:
-        return None
-
-# 2. Barra lateral de carga
+# 3. Barra lateral para carga de CSV
 st.sidebar.header("📂 Ingesta de Datos")
 archivo_cargado = st.sidebar.file_uploader("Subir CSV de Opciones:", type=["csv"])
 
@@ -83,18 +63,15 @@ if archivo_cargado is not None:
     with st.spinner("Procesando datos y calibrando variables..."):
         df = df_raw.copy()
         
-        # Parseo de fechas seguro
         df["QUOTE_DATE"] = pd.to_datetime(df["QUOTE_DATE"], errors="coerce")
         df["EXPIRE_DATE"] = pd.to_datetime(df["EXPIRE_DATE"], errors="coerce")
         df = df.dropna(subset=["QUOTE_DATE"]).copy()
 
-        # Parseo numérico
         cols_num = ["UNDERLYING_LAST", "DTE", "C_IV", "C_VOLUME", "C_LAST", "C_BID", "C_ASK", "STRIKE", "PREMIUM", "PNL_PER_SHARE", "PROBABILIDAD_COMPRA"]
         for c in cols_num:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c].astype(str).str.strip(), errors="coerce")
 
-        # Cálculo de Prima si no existe
         if "PREMIUM" not in df.columns or df["PREMIUM"].isnull().all():
             if "C_BID" in df.columns and "C_ASK" in df.columns:
                 mid = (df["C_BID"] + df["C_ASK"]) / 2
@@ -103,7 +80,6 @@ if archivo_cargado is not None:
             else:
                 df["PREMIUM"] = df.get("C_LAST", 0)
 
-        # Cálculo de Moneyness y Spread
         if "MONEYNESS" not in df.columns:
             df["MONEYNESS"] = df["UNDERLYING_LAST"] / df["STRIKE"]
         if "STRIKE_DISTANCE_CALC_PCT" not in df.columns:
@@ -118,7 +94,6 @@ if archivo_cargado is not None:
         df = df.dropna(subset=["QUOTE_DATE", "UNDERLYING_LAST", "STRIKE", "DTE", "C_IV", "PREMIUM"])
         df = df[(df["PREMIUM"] > 0) & (df["DTE"] > 0)].copy()
 
-        # Inferencia de probabilidades
         features = ["UNDERLYING_LAST", "STRIKE", "PREMIUM", "DTE", "C_IV", "C_VOLUME", "MONEYNESS", "STRIKE_DISTANCE_CALC_PCT", "BID_ASK_SPREAD_PCT"]
         if "PROBABILIDAD_COMPRA" not in df.columns or df["PROBABILIDAD_COMPRA"].isnull().all():
             if modelo is not None:
@@ -128,7 +103,6 @@ if archivo_cargado is not None:
                 score = (df["MONEYNESS"] - 0.95) * 1.8 - (df["C_IV"] > 0.55).astype(int) * 0.3
                 df["PROBABILIDAD_COMPRA"] = np.clip(score * 0.35 + 0.40, 0.02, 0.96)
 
-        # Payoff y PnL
         if "PNL_PER_SHARE" not in df.columns:
             if "UNDERLYING_AT_EXPIRY" not in df.columns:
                 df["UNDERLYING_AT_EXPIRY"] = df["UNDERLYING_LAST"] * 1.02
@@ -138,7 +112,7 @@ if archivo_cargado is not None:
         if "SIGNAL_REAL" not in df.columns:
             df["SIGNAL_REAL"] = np.where(df["PNL_PER_SHARE"] > 0, "Comprar", "No comprar")
 
-    # 3. Filtros Interactivos (Sidebar)
+    # 4. Filtros interactivos
     st.sidebar.subheader("🔍 Filtros Dinámicos")
     min_f = df["QUOTE_DATE"].min().date()
     max_f = df["QUOTE_DATE"].max().date()
@@ -147,12 +121,7 @@ if archivo_cargado is not None:
         st.sidebar.info(f"Fecha analizada: {min_f}")
         fecha_sel = [min_f, max_f]
     else:
-        fecha_sel = st.sidebar.date_input(
-            "Rango de Fechas:",
-            value=(min_f, max_f),
-            min_value=min_f,
-            max_value=max_f
-        )
+        fecha_sel = st.sidebar.date_input("Rango de Fechas:", value=(min_f, max_f), min_value=min_f, max_value=max_f)
 
     s_min = float(df["STRIKE"].min())
     s_max = float(df["STRIKE"].max())
@@ -161,7 +130,6 @@ if archivo_cargado is not None:
     rango_dte = st.sidebar.slider("Días al Vencimiento (DTE):", int(df["DTE"].min()), int(df["DTE"].max()), (int(df["DTE"].min()), int(df["DTE"].max())))
     umbral_corte = st.sidebar.slider("Umbral de Decisión ML (%):", 50, 90, 65) / 100.0
 
-    # Aplicación de filtros
     if isinstance(fecha_sel, (list, tuple)) and len(fecha_sel) == 2:
         filtro = (df["QUOTE_DATE"].dt.date >= fecha_sel[0]) & (df["QUOTE_DATE"].dt.date <= fecha_sel[1])
     else:
@@ -173,7 +141,7 @@ if archivo_cargado is not None:
     df_filtrado = df[filtro].copy()
     df_filtrado["SENAL_MODELO"] = np.where(df_filtrado["PROBABILIDAD_COMPRA"] >= umbral_corte, "Comprar", "No comprar")
 
-    # 4. Paneles Analíticos
+    # 5. Paneles analíticos
     tab1, tab2, tab3 = st.tabs(["01. Análisis Descriptivo", "02. Análisis Predictivo", "03. Análisis Prescriptivo"])
 
     # --- TAB 1: DESCRIPTIVO ---
@@ -195,27 +163,21 @@ if archivo_cargado is not None:
             vol_por_strike = df_filtrado.groupby("STRIKE")["C_VOLUME"].sum().reset_index()
             strike_max = vol_por_strike.sort_values(by="C_VOLUME", ascending=False).iloc[0]["STRIKE"] if len(vol_por_strike) > 0 else 0
             fig_v = px.bar(vol_por_strike, x="C_VOLUME", y="STRIKE", orientation="h", title="Concentración de Liquidez por Strike ($)", color_discrete_sequence=["#0284c7"])
-            st.plotly_chart(fig_v, use_container_width=True)
+            st.plotly_chart(fig_v, width="stretch")
         with col_g2:
             n_samples = min(1200, len(df_filtrado))
             muestra = df_filtrado.sample(n_samples) if n_samples > 0 else df_filtrado
             fig_s = px.scatter(muestra, x="MONEYNESS", y="C_IV", color="SIGNAL_REAL", title="Estructura de Volatilidad (IV) vs Moneyness")
-            st.plotly_chart(fig_s, use_container_width=True)
+            st.plotly_chart(fig_s, width="stretch")
 
-        # Interpretación Llama 3 con fallback
         with st.expander("🤖 Interpretación Ejecutiva con Llama 3", expanded=True):
             if st.button("Generar Diagnóstico Descriptivo"):
                 with st.spinner("Consultando Llama 3..."):
-                    prompt_s = "Eres un analista cuantitativo senior de Wall Street. Responde de forma muy concreta y profesional en 2 viñetas concisas."
-                    prompt_u = f"Analiza estos datos de opciones CALL de AAPL: Total contratos: {total_c}, Prima promedio: ${prima_p:.2f}, Volumen total: {vol_t:,.0f}, IV promedio: {iv_p:.2f}%, Strike con mayor volumen: ${strike_max:.2f}. Da 2 conclusiones clave para un trader institucional."
-                    analisis_ia = consultar_llama3(prompt_s, prompt_u)
-                    if analisis_ia:
-                        st.markdown(analisis_ia)
-                    else:
-                        st.info(f"""
-                        * **Liquidez institucional:** Concentración operativa clave en el strike **${strike_max:.2f}**, que fija el nivel de referencia del mercado.
-                        * **Coste y Volatilidad:** Prima media de **${prima_p:.2f}** sujeta a volatilidad implícita del **{iv_p:.1f}%**, alertando de riesgo por compresión de volatilidad (IV crush).
-                        """)
+                    prompt_s = "Eres un analista cuantitativo senior. Devuelve exactamente 2 viñetas concisas y directas analizando liquidez y volatilidad."
+                    prompt_u = f"AAPL CALL: Total={total_c}, Prima prom=${prima_p:.2f}, Vol total={vol_t:,.0f}, IV prom={iv_p:.2f}%, Strike con mayor vol=${strike_max:.2f}. Explica la implicación institucional."
+                    analisis = consultar_llama3(prompt_s, prompt_u)
+                    if analisis:
+                        st.markdown(analisis)
             else:
                 st.caption("Haz clic en el botón para solicitar el análisis en vivo a Llama 3.")
 
@@ -242,26 +204,21 @@ if archivo_cargado is not None:
                 "Predicho: Comprar": [tp, fp],
                 "Predicho: No comprar": [fn, tn]
             }, index=["Real: Comprar", "Real: No comprar"])
-            st.dataframe(matriz_data, use_container_width=True)
+            st.dataframe(matriz_data, width="stretch")
         with col_m2:
             df_filtrado["RANGO_CONF"] = pd.cut(df_filtrado["PROBABILIDAD_COMPRA"], bins=[0, 0.5, 0.6, 0.7, 0.8, 1.0], labels=["< 50%", "50% - 60%", "60% - 70%", "70% - 80%", "80% - 100%"])
             pnl_conf = df_filtrado.groupby("RANGO_CONF", observed=False)["PNL_PER_SHARE"].mean().reset_index()
             fig_conf = px.bar(pnl_conf, x="RANGO_CONF", y="PNL_PER_SHARE", title="Retorno Promedio según Nivel de Confianza ($)", color_discrete_sequence=["#0284c7"])
-            st.plotly_chart(fig_conf, use_container_width=True)
+            st.plotly_chart(fig_conf, width="stretch")
 
         with st.expander("🤖 Interpretación Ejecutiva con Llama 3", expanded=True):
             if st.button("Generar Diagnóstico Predictivo"):
                 with st.spinner("Consultando Llama 3..."):
-                    prompt_s = "Eres un especialista en Machine Learning aplicado a finanzas. Explica el balance entre falsos positivos y aciertos en 2 viñetas claras."
-                    prompt_u = f"Métricas del modelo de opciones CALL: Accuracy global: {accuracy*100:.2f}%, Alertas de compra: {tp+fp}, Aciertos verdaderos (TP): {tp}, Verdaderos negativos (TN descartados): {tn}, Falsos positivos (FP): {fp}. Umbral de corte: {int(umbral_corte*100)}%. Resume el valor predictivo."
-                    analisis_ia = consultar_llama3(prompt_s, prompt_u)
-                    if analisis_ia:
-                        st.markdown(analisis_ia)
-                    else:
-                        st.info(f"""
-                        * **Filtrado defensivo:** El clasificador filtró y descartó **{tn:,} contratos con rentabilidad negativa**, protegiendo la cartera de entradas perdedoras.
-                        * **Asimetría de retorno:** Los contratos asignados a una probabilidad superior al **80%** concentran el mayor PnL unitario positivo.
-                        """)
+                    prompt_s = "Eres especialista en ML aplicado a finanzas. Explica el balance entre falsos positivos y aciertos en 2 viñetas concisas."
+                    prompt_u = f"Accuracy={accuracy*100:.2f}%, Alertas={tp+fp}, TP={tp}, TN={tn}, FP={fp}, Umbral={int(umbral_corte*100)}%. Resume el valor predictivo y el filtrado de pérdidas."
+                    analisis = consultar_llama3(prompt_s, prompt_u)
+                    if analisis:
+                        st.markdown(analisis)
             else:
                 st.caption("Haz clic en el botón para evaluar la capacidad predictiva con Llama 3.")
 
@@ -291,21 +248,16 @@ if archivo_cargado is not None:
         tabla_dte = resumen_dte.reset_index().rename(columns={"TRAMO_DTE": "Rango Vencimiento (DTE)", "PNL_PER_SHARE": "PnL Acumulado ($)"})
 
         st.write("##### Rendimiento por Rango de Vencimiento")
-        st.dataframe(tabla_dte, use_container_width=True)
+        st.dataframe(tabla_dte, width="stretch")
 
         with st.expander("🤖 Decisión Prescriptiva con Llama 3", expanded=True):
             if st.button("Generar Regla de Trading Prescriptiva"):
-                with st.spinner("Llama 3 sintetizando la regla de inversión..."):
-                    prompt_s = "Eres el Chief Investment Officer (CIO) de un hedge fund. Define reglas cuantitativas claras basadas en Theta decay."
-                    prompt_u = f"Resultados de la estrategia: PnL total: ${pnl_tot:,.2f}, Win Rate: {win_r:.2f}%. En tramos de vencimiento: 31-60 DTE genera fuertes pérdidas por Theta decay (-$494k), mientras que <=15d y >60d generan ganancias. Formula la política de asignación de capital."
-                    analisis_ia = consultar_llama3(prompt_s, prompt_u)
-                    if analisis_ia:
-                        st.markdown(analisis_ia)
-                    else:
-                        st.success("""
-                        * **Regla Prescriptiva 1 (Exclusión):** Queda estrictamente vetada la toma de posiciones CALL entre 31 y 60 días a vencimiento por erosión acelerada de Theta.
-                        * **Regla Prescriptiva 2 (Ejecución):** Restringir asignación de capital a contratos de momentum (<= 15 DTE) o posiciones de cobertura a largo plazo (> 60 DTE).
-                        """)
+                with st.spinner("Llama 3 sintetizando la política de inversión..."):
+                    prompt_s = "Eres CIO de un fondo cuantitativo. Define la política de inversión en 2 reglas directas y ejecutivas."
+                    prompt_u = f"Estrategia AAPL: PnL=${pnl_tot:,.2f}, Win Rate={win_r:.2f}%. En 31-60 DTE se pierden -$494k por Theta decay acelerado; <=15d y >60d son muy rentables. Establece las reglas prescriptivas de capital."
+                    analisis = consultar_llama3(prompt_s, prompt_u)
+                    if analisis:
+                        st.markdown(analisis)
             else:
                 st.caption("Haz clic en el botón para formular la política de inversión con Llama 3.")
 
