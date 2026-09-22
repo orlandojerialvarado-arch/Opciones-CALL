@@ -6,13 +6,12 @@ import joblib
 import os
 
 # Configuración visual de la página
-st.set_page_config(page_title="Sistema Analítico de Opciones CALL", layout="wide", page_icon="📈")
+st.set_page_config(page_title="PMV Opciones CALL", layout="wide", page_icon="📈")
 
 # Banner institucional idéntico al reporte oficial
 st.markdown("""
 <div style="background-color: #1e2a4a; padding: 18px; border-radius: 6px; text-align: center; margin-bottom: 20px;">
-    <h2 style="color: white; margin: 0; font-weight: 700; letter-spacing: 0.04em;">BOT INVERSIÓN EN OPCIONES CALL — PLATAFORMA INTEGRAL</h2>
-    <p style="color: #94a3b8; margin: 5px 0 0; font-size: 0.9rem;">Pipeline End-to-End: Limpieza en memoria, inferencia ML y analítica prescriptiva en vivo</p>
+    <h2 style="color: white; margin: 0; font-weight: 700; letter-spacing: 0.04em;">BOT INVERSIÓN EN OPCIONES CALL</h2>
 </div>
 """, unsafe_allow_html=True)
 
@@ -29,7 +28,7 @@ modelo = obtener_modelo()
 
 # 2. Barra lateral para carga de datos
 st.sidebar.header("📂 Ingesta de Datos")
-archivo_cargado = st.sidebar.file_uploader("Subir CSV de Opciones (Kaggle o histórico):", type=["csv"])
+archivo_cargado = st.sidebar.file_uploader("Subir CSV de Opciones:", type=["csv"])
 
 if archivo_cargado is not None:
     # Lectura y depuración de nombres de columnas
