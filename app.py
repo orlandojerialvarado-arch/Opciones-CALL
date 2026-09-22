@@ -25,7 +25,7 @@ def consultar_llama3(prompt_sistema, prompt_usuario):
         clave = str(st.secrets["GROQ_API_KEY"]).strip()
         cliente = Groq(api_key=clave)
         respuesta = cliente.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama-3.1-8b-instant",
             messages=[
                 {"role": "system", "content": prompt_sistema},
                 {"role": "user", "content": prompt_usuario}
