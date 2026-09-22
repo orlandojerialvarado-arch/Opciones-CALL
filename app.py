@@ -26,6 +26,27 @@ def obtener_modelo():
 
 modelo = obtener_modelo()
 
+# Función para consultar Llama 3 vía Groq
+def consultar_llama3(prompt_sistema, prompt_usuario):
+    api_key = st.secrets.get("GROQ_API_KEY", None)
+    if not api_key:
+        return None
+    try:
+        from groq import Groq
+        cliente = Groq(api_key=api_key)
+        respuesta = cliente.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": prompt_sistema},
+                {"role": "user", "content": prompt_usuario}
+            ],
+            temperature=0.2,
+            max_tokens=450
+        )
+        return respuesta.choices[0].message.content
+    except Exception as e:
+        return None
+
 # 2. Barra lateral de carga
 st.sidebar.header("📂 Ingesta de Datos")
 archivo_cargado = st.sidebar.file_uploader("Subir CSV de Opciones:", type=["csv"])
@@ -82,7 +103,7 @@ if archivo_cargado is not None:
                 score = (df["MONEYNESS"] - 0.95) * 1.8 - (df["C_IV"] > 0.55).astype(int) * 0.3
                 df["PROBABILIDAD_COMPRA"] = np.clip(score * 0.35 + 0.40, 0.02, 0.96)
 
-        # Payoff y PnL si no vienen calculados
+        # Payoff y PnL
         if "PNL_PER_SHARE" not in df.columns:
             if "UNDERLYING_AT_EXPIRY" not in df.columns:
                 df["UNDERLYING_AT_EXPIRY"] = df["UNDERLYING_LAST"] * 1.02
@@ -156,11 +177,22 @@ if archivo_cargado is not None:
             fig_s = px.scatter(muestra, x="MONEYNESS", y="C_IV", color="SIGNAL_REAL", title="Estructura de Volatilidad (IV) vs Moneyness")
             st.plotly_chart(fig_s, use_container_width=True)
 
-        st.info(f"""
-        **Diagnóstico Descriptivo:**
-        * La mayor liquidez operativa se sitúa en el strike **${strike_max:.2f}**, que concentra el interés del mercado para el tramo evaluado.
-        * La prima promedio es de **${prima_p:.2f}** con una volatilidad implícita promedio de **{iv_p:.2f}%**.
-        """)
+        # Interpretación Llama 3 con fallback
+        with st.expander("🤖 Interpretación Ejecutiva con Llama 3", expanded=True):
+            if st.button("Generar Diagnóstico Descriptivo"):
+                with st.spinner("Consultando Llama 3..."):
+                    prompt_s = "Eres un analista cuantitativo senior de Wall Street. Responde de forma muy concreta y profesional en 2 viñetas concisas."
+                    prompt_u = f"Analiza estos datos de opciones CALL de AAPL: Total contratos: {total_c}, Prima promedio: ${prima_p:.2f}, Volumen total: {vol_t:,.0f}, IV promedio: {iv_p:.2f}%, Strike con mayor volumen: ${strike_max:.2f}. Da 2 conclusiones clave para un trader institucional."
+                    analisis_ia = consultar_llama3(prompt_s, prompt_u)
+                    if analisis_ia:
+                        st.markdown(analisis_ia)
+                    else:
+                        st.info(f"""
+                        * **Liquidez institucional:** Concentración operativa clave en el strike **${strike_max:.2f}**, que fija el nivel de referencia del mercado.
+                        * **Coste y Volatilidad:** Prima media de **${prima_p:.2f}** sujeta a volatilidad implícita del **{iv_p:.1f}%**, alertando de riesgo por compresión de volatilidad (IV crush).
+                        """)
+            else:
+                st.caption("Haz clic en el botón para solicitar el análisis en vivo a Llama 3.")
 
     # --- TAB 2: PREDICTIVO ---
     with tab2:
@@ -192,11 +224,21 @@ if archivo_cargado is not None:
             fig_conf = px.bar(pnl_conf, x="RANGO_CONF", y="PNL_PER_SHARE", title="Retorno Promedio según Nivel de Confianza ($)", color_discrete_sequence=["#0284c7"])
             st.plotly_chart(fig_conf, use_container_width=True)
 
-        st.info(f"""
-        **Diagnóstico Predictivo:**
-        * Con un umbral de decisión del **{int(umbral_corte * 100)}%**, el modelo descartó **{tn:,} contratos no rentables**, minimizando pérdidas de capital.
-        * El tramo con mayor certeza estadística (**80% - 100%**) produce el mayor retorno unitario promedio por acción.
-        """)
+        with st.expander("🤖 Interpretación Ejecutiva con Llama 3", expanded=True):
+            if st.button("Generar Diagnóstico Predictivo"):
+                with st.spinner("Consultando Llama 3..."):
+                    prompt_s = "Eres un especialista en Machine Learning aplicado a finanzas. Explica el balance entre falsos positivos y aciertos en 2 viñetas claras."
+                    prompt_u = f"Métricas del modelo de opciones CALL: Accuracy global: {accuracy*100:.2f}%, Alertas de compra: {tp+fp}, Aciertos verdaderos (TP): {tp}, Verdaderos negativos (TN descartados): {tn}, Falsos positivos (FP): {fp}. Umbral de corte: {int(umbral_corte*100)}%. Resume el valor predictivo."
+                    analisis_ia = consultar_llama3(prompt_s, prompt_u)
+                    if analisis_ia:
+                        st.markdown(analisis_ia)
+                    else:
+                        st.info(f"""
+                        * **Filtrado defensivo:** El clasificador filtró y descartó **{tn:,} contratos con rentabilidad negativa**, protegiendo la cartera de entradas perdedoras.
+                        * **Asimetría de retorno:** Los contratos asignados a una probabilidad superior al **80%** concentran el mayor PnL unitario positivo.
+                        """)
+            else:
+                st.caption("Haz clic en el botón para evaluar la capacidad predictiva con Llama 3.")
 
     # --- TAB 3: PRESCRIPTIVO ---
     with tab3:
@@ -226,11 +268,21 @@ if archivo_cargado is not None:
         st.write("##### Rendimiento por Rango de Vencimiento")
         st.dataframe(tabla_dte, use_container_width=True)
 
-        st.success("""
-        **Regla Prescriptiva del Sistema:**
-        * **Descarte de contratos de 31 a 60 días:** Este tramo histórico acumula pérdidas consistentes por decaimiento temporal acelerado (*Theta decay*).
-        * **Zona favorable:** Las operaciones deben concentrarse en contratos de corto plazo (<= 15 días) para capturar momentum, o de largo plazo (> 60 días) que brinden suficiente tiempo de maduración.
-        """)
+        with st.expander("🤖 Decisión Prescriptiva con Llama 3", expanded=True):
+            if st.button("Generar Regla de Trading Prescriptiva"):
+                with st.spinner("Llama 3 sintetizando la regla de inversión..."):
+                    prompt_s = "Eres el Chief Investment Officer (CIO) de un hedge fund. Define reglas cuantitativas claras basadas en Theta decay."
+                    prompt_u = f"Resultados de la estrategia: PnL total: ${pnl_tot:,.2f}, Win Rate: {win_r:.2f}%. En tramos de vencimiento: 31-60 DTE genera fuertes pérdidas por Theta decay (-$494k), mientras que <=15d y >60d generan ganancias. Formula la política de asignación de capital."
+                    analisis_ia = consultar_llama3(prompt_s, prompt_u)
+                    if analisis_ia:
+                        st.markdown(analisis_ia)
+                    else:
+                        st.success("""
+                        * **Regla Prescriptiva 1 (Exclusión):** Queda estrictamente vetada la toma de posiciones CALL entre 31 y 60 días a vencimiento por erosión acelerada de Theta.
+                        * **Regla Prescriptiva 2 (Ejecución):** Restringir asignación de capital a contratos de momentum (<= 15 DTE) o posiciones de cobertura a largo plazo (> 60 DTE).
+                        """)
+            else:
+                st.caption("Haz clic en el botón para formular la política de inversión con Llama 3.")
 
 else:
     st.info("👈 Por favor, carga el archivo CSV en la barra lateral para procesar los datos en tiempo real.")
