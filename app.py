@@ -15,8 +15,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# 1. Función de consulta a Llama 3
-# 1. Función de consulta a LLM vía Groq con fallback de modelos
+# 1. Función de consulta a LLM vía Groq con autodetección de modelo activo
 def consultar_llama3(prompt_sistema, prompt_usuario):
     if "GROQ_API_KEY" not in st.secrets:
         st.error("No se encontró GROQ_API_KEY en Secrets.")
@@ -26,34 +25,34 @@ def consultar_llama3(prompt_sistema, prompt_usuario):
         clave = str(st.secrets["GROQ_API_KEY"]).strip()
         cliente = Groq(api_key=clave)
         
-        # Lista ordenada de modelos disponibles en Groq
-        modelos_a_probar = [
-            "llama3-70b-8192",
-            "llama3-8b-8192",
-            "gemma2-9b-it",
-            "mixtral-8x7b-32768"
-        ]
+        # Obtener los modelos activos en tiempo real de tu cuenta
+        lista_modelos = cliente.models.list().data
+        ids_disponibles = [m.id for m in lista_modelos]
         
-        for mod in modelos_a_probar:
-            try:
-                respuesta = cliente.chat.completions.create(
-                    model=mod,
-                    messages=[
-                        {"role": "system", "content": prompt_sistema},
-                        {"role": "user", "content": prompt_usuario}
-                    ],
-                    temperature=0.2,
-                    max_tokens=450
-                )
-                return respuesta.choices[0].message.content
-            except Exception as err:
-                if "model_not_found" in str(err) or "does not exist" in str(err):
-                    continue
-                else:
-                    raise err
+        # Buscar preferentemente modelos Llama o tomar el primero funcional
+        modelo_elegido = None
+        for m_id in ids_disponibles:
+            if "llama" in m_id.lower() and "guard" not in m_id.lower():
+                modelo_elegido = m_id
+                break
         
-        st.error("No se encontró ningún modelo compatible habilitado en la cuenta de Groq.")
-        return None
+        if not modelo_elegido and ids_disponibles:
+            modelo_elegido = ids_disponibles[0]
+            
+        if not modelo_elegido:
+            st.error("No hay modelos disponibles en la cuenta de Groq.")
+            return None
+
+        respuesta = cliente.chat.completions.create(
+            model=modelo_elegido,
+            messages=[
+                {"role": "system", "content": prompt_sistema},
+                {"role": "user", "content": prompt_usuario}
+            ],
+            temperature=0.2,
+            max_tokens=450
+        )
+        return respuesta.choices[0].message.content
 
     except ImportError:
         st.error("Librería 'groq' no instalada. Revisa requirements.txt.")
