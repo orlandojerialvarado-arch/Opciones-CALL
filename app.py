@@ -5,10 +5,10 @@ import plotly.express as px
 import joblib
 import os
 
-# Configuración visual de la página
-st.set_page_config(page_title="PMV Opciones CALL", layout="wide", page_icon="📈")
+# Configuración visual
+st.set_page_config(page_title="Sistema Analítico de Opciones CALL", layout="wide", page_icon="📈")
 
-# Banner institucional idéntico al reporte oficial
+# Banner superior
 st.markdown("""
 <div style="background-color: #1e2a4a; padding: 18px; border-radius: 6px; text-align: center; margin-bottom: 20px;">
     <h2 style="color: white; margin: 0; font-weight: 700; letter-spacing: 0.04em;">BOT INVERSIÓN EN OPCIONES CALL</h2>
@@ -26,82 +26,102 @@ def obtener_modelo():
 
 modelo = obtener_modelo()
 
-# 2. Barra lateral para carga de datos
+# 2. Barra lateral de carga
 st.sidebar.header("📂 Ingesta de Datos")
 archivo_cargado = st.sidebar.file_uploader("Subir CSV de Opciones:", type=["csv"])
 
 if archivo_cargado is not None:
-    # Lectura y depuración de nombres de columnas
     df_raw = pd.read_csv(archivo_cargado, low_memory=False)
     df_raw.columns = [str(c).strip().replace("[", "").replace("]", "") for c in df_raw.columns]
 
-    with st.spinner("Procesando datos y calculando variables analíticas..."):
+    with st.spinner("Procesando datos y calibrando variables..."):
         df = df_raw.copy()
         
-        # Conversión de fechas
+        # Parseo de fechas seguro
         df["QUOTE_DATE"] = pd.to_datetime(df["QUOTE_DATE"], errors="coerce")
         df["EXPIRE_DATE"] = pd.to_datetime(df["EXPIRE_DATE"], errors="coerce")
+        df = df.dropna(subset=["QUOTE_DATE"]).copy()
 
-        # Conversión a tipos numéricos
-        cols_num = ["UNDERLYING_LAST", "DTE", "C_IV", "C_VOLUME", "C_LAST", "C_BID", "C_ASK", "STRIKE"]
+        # Parseo numérico
+        cols_num = ["UNDERLYING_LAST", "DTE", "C_IV", "C_VOLUME", "C_LAST", "C_BID", "C_ASK", "STRIKE", "PREMIUM", "PNL_PER_SHARE", "PROBABILIDAD_COMPRA"]
         for c in cols_num:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c].astype(str).str.strip(), errors="coerce")
 
-        # Feature Engineering: Prima, Moneyness y Spread
-        if "C_BID" in df.columns and "C_ASK" in df.columns:
-            mid = (df["C_BID"] + df["C_ASK"]) / 2
-            valid_mid = (df["C_ASK"] >= df["C_BID"]) & (df["C_ASK"] > 0)
-            df["PREMIUM"] = mid.where(valid_mid, df.get("C_LAST", 0))
-            df["BID_ASK_SPREAD_PCT"] = (df["C_ASK"] - df["C_BID"]) / df["PREMIUM"].replace(0, np.nan)
-        else:
-            df["PREMIUM"] = df.get("C_LAST", 0)
-            df["BID_ASK_SPREAD_PCT"] = 0.05
+        # Cálculo de Prima si no existe
+        if "PREMIUM" not in df.columns or df["PREMIUM"].isnull().all():
+            if "C_BID" in df.columns and "C_ASK" in df.columns:
+                mid = (df["C_BID"] + df["C_ASK"]) / 2
+                valid_mid = (df["C_ASK"] >= df["C_BID"]) & (df["C_ASK"] > 0)
+                df["PREMIUM"] = mid.where(valid_mid, df.get("C_LAST", 0))
+            else:
+                df["PREMIUM"] = df.get("C_LAST", 0)
 
-        df["MONEYNESS"] = df["UNDERLYING_LAST"] / df["STRIKE"]
-        df["STRIKE_DISTANCE_CALC_PCT"] = (df["UNDERLYING_LAST"] - df["STRIKE"]) / df["STRIKE"]
+        # Cálculo de Moneyness y Spread
+        if "MONEYNESS" not in df.columns:
+            df["MONEYNESS"] = df["UNDERLYING_LAST"] / df["STRIKE"]
+        if "STRIKE_DISTANCE_CALC_PCT" not in df.columns:
+            df["STRIKE_DISTANCE_CALC_PCT"] = (df["UNDERLYING_LAST"] - df["STRIKE"]) / df["STRIKE"]
+        if "BID_ASK_SPREAD_PCT" not in df.columns:
+            if "C_BID" in df.columns and "C_ASK" in df.columns:
+                df["BID_ASK_SPREAD_PCT"] = (df["C_ASK"] - df["C_BID"]) / df["PREMIUM"].replace(0, np.nan)
+            else:
+                df["BID_ASK_SPREAD_PCT"] = 0.05
+
         df["C_VOLUME"] = df.get("C_VOLUME", 0).fillna(0)
-
-        # Depuración de registros consistentes
-        df = df.dropna(subset=["QUOTE_DATE", "EXPIRE_DATE", "UNDERLYING_LAST", "STRIKE", "DTE", "C_IV", "PREMIUM"])
+        df = df.dropna(subset=["QUOTE_DATE", "UNDERLYING_LAST", "STRIKE", "DTE", "C_IV", "PREMIUM"])
         df = df[(df["PREMIUM"] > 0) & (df["DTE"] > 0)].copy()
 
-        # Inferencia con el modelo serializado (o heurística si no se subió el .pkl)
+        # Inferencia de probabilidades
         features = ["UNDERLYING_LAST", "STRIKE", "PREMIUM", "DTE", "C_IV", "C_VOLUME", "MONEYNESS", "STRIKE_DISTANCE_CALC_PCT", "BID_ASK_SPREAD_PCT"]
-        if modelo is not None:
-            X = df[features].fillna(0)
-            df["PROBABILIDAD_COMPRA"] = modelo.predict_proba(X)[:, 1]
-        else:
-            # Puntuación calibrada de respaldo
-            score = (df["MONEYNESS"] - 0.95) * 1.8 - (df["C_IV"] > 0.55).astype(int) * 0.3
-            df["PROBABILIDAD_COMPRA"] = np.clip(score * 0.35 + 0.40, 0.02, 0.96)
+        if "PROBABILIDAD_COMPRA" not in df.columns or df["PROBABILIDAD_COMPRA"].isnull().all():
+            if modelo is not None:
+                X = df[features].fillna(0)
+                df["PROBABILIDAD_COMPRA"] = modelo.predict_proba(X)[:, 1]
+            else:
+                score = (df["MONEYNESS"] - 0.95) * 1.8 - (df["C_IV"] > 0.55).astype(int) * 0.3
+                df["PROBABILIDAD_COMPRA"] = np.clip(score * 0.35 + 0.40, 0.02, 0.96)
 
-        # Target de rentabilidad histórica
-        if "UNDERLYING_AT_EXPIRY" not in df.columns:
-            df["UNDERLYING_AT_EXPIRY"] = df["UNDERLYING_LAST"] * 1.02
-        
-        df["PAYOFF"] = np.maximum(df["UNDERLYING_AT_EXPIRY"] - df["STRIKE"], 0)
-        df["PNL_PER_SHARE"] = df["PAYOFF"] - df["PREMIUM"]
-        df["SIGNAL_REAL"] = np.where(df["PNL_PER_SHARE"] > 0, "Comprar", "No comprar")
+        # Payoff y PnL si no vienen calculados
+        if "PNL_PER_SHARE" not in df.columns:
+            if "UNDERLYING_AT_EXPIRY" not in df.columns:
+                df["UNDERLYING_AT_EXPIRY"] = df["UNDERLYING_LAST"] * 1.02
+            df["PAYOFF"] = np.maximum(df["UNDERLYING_AT_EXPIRY"] - df["STRIKE"], 0)
+            df["PNL_PER_SHARE"] = df["PAYOFF"] - df["PREMIUM"]
 
-    # 3. Controles interactivos (Filtros en tiempo real)
-    st.sidebar.subheader("🔍 Filtros de Segmentación")
+        if "SIGNAL_REAL" not in df.columns:
+            df["SIGNAL_REAL"] = np.where(df["PNL_PER_SHARE"] > 0, "Comprar", "No comprar")
+
+    # 3. Filtros Interactivos (Sidebar)
+    st.sidebar.subheader("🔍 Filtros Dinámicos")
+    
+    # Manejo robusto de fechas
     min_f = df["QUOTE_DATE"].min().date()
     max_f = df["QUOTE_DATE"].max().date()
-    rango_fechas = st.sidebar.date_input("Rango de Fechas (QUOTE_DATE):", [min_f, max_f], min_value=min_f, max_value=max_f)
+    
+    if min_f == max_f:
+        st.sidebar.info(f"Fecha analizada: {min_f}")
+        fecha_sel = [min_f, max_f]
+    else:
+        fecha_sel = st.sidebar.date_input(
+            "Rango de Fechas (QUOTE_DATE):",
+            value=(min_f, max_f),
+            min_value=min_f,
+            max_value=max_f
+        )
 
     s_min = float(df["STRIKE"].min())
     s_max = float(df["STRIKE"].max())
     rango_strike = st.sidebar.slider("Precio Strike ($):", s_min, s_max, (s_min, s_max))
 
-    rango_dte = st.sidebar.slider("Días al Vencimiento (DTE):", int(df["DTE"].min()), int(df["DTE"].max()), (1, 150))
+    rango_dte = st.sidebar.slider("Días al Vencimiento (DTE):", int(df["DTE"].min()), int(df["DTE"].max()), (int(df["DTE"].min()), int(df["DTE"].max())))
     umbral_corte = st.sidebar.slider("Umbral de Decisión ML (%):", 50, 90, 65) / 100.0
 
-    # Aplicación de los filtros
-    if len(rango_fechas) == 2:
-        filtro = (df["QUOTE_DATE"].dt.date >= rango_fechas[0]) & (df["QUOTE_DATE"].dt.date <= rango_fechas[1])
+    # Aplicación de filtros
+    if isinstance(fecha_sel, (list, tuple)) and len(fecha_sel) == 2:
+        filtro = (df["QUOTE_DATE"].dt.date >= fecha_sel[0]) & (df["QUOTE_DATE"].dt.date <= fecha_sel[1])
     else:
-        filtro = pd.Series([True] * len(df))
+        filtro = pd.Series([True] * len(df), index=df.index)
 
     filtro &= (df["STRIKE"] >= rango_strike[0]) & (df["STRIKE"] <= rango_strike[1])
     filtro &= (df["DTE"] >= rango_dte[0]) & (df["DTE"] <= rango_dte[1])
@@ -109,12 +129,12 @@ if archivo_cargado is not None:
     df_filtrado = df[filtro].copy()
     df_filtrado["SENAL_MODELO"] = np.where(df_filtrado["PROBABILIDAD_COMPRA"] >= umbral_corte, "Comprar", "No comprar")
 
-    # 4. Despliegue de los 3 niveles analíticos
+    # 4. Despliegue de Paneles Analíticos
     tab1, tab2, tab3 = st.tabs(["01. Análisis Descriptivo", "02. Análisis Predictivo", "03. Análisis Prescriptivo"])
 
     # --- TAB 1: DESCRIPTIVO ---
     with tab1:
-        st.markdown("#### Panorama General del Mercado")
+        st.markdown("#### Panorama Descriptivo del Mercado")
         d1, d2, d3, d4 = st.columns(4)
         d1.metric("Total Contratos", f"{len(df_filtrado):,}")
         d2.metric("Prima Promedio", f"${df_filtrado['PREMIUM'].mean():.2f}")
@@ -127,13 +147,14 @@ if archivo_cargado is not None:
             fig_v = px.bar(vol_por_strike, x="C_VOLUME", y="STRIKE", orientation="h", title="Volumen Total por Strike", color_discrete_sequence=["#0284c7"])
             st.plotly_chart(fig_v, use_container_width=True)
         with col_g2:
-            muestra = df_filtrado.sample(min(1200, len(df_filtrado)))
+            n_samples = min(1200, len(df_filtrado))
+            muestra = df_filtrado.sample(n_samples) if n_samples > 0 else df_filtrado
             fig_s = px.scatter(muestra, x="MONEYNESS", y="C_IV", color="SIGNAL_REAL", title="Estructura de Volatilidad (IV) vs Moneyness")
             st.plotly_chart(fig_s, use_container_width=True)
 
     # --- TAB 2: PREDICTIVO ---
     with tab2:
-        st.markdown("#### Desempeño del Algoritmo de Clasificación")
+        st.markdown("#### Rendimiento del Modelo de Clasificación")
         tp = len(df_filtrado[(df_filtrado['SENAL_MODELO'] == 'Comprar') & (df_filtrado['SIGNAL_REAL'] == 'Comprar')])
         fp = len(df_filtrado[(df_filtrado['SENAL_MODELO'] == 'Comprar') & (df_filtrado['SIGNAL_REAL'] == 'No comprar')])
         tn = len(df_filtrado[(df_filtrado['SENAL_MODELO'] == 'No comprar') & (df_filtrado['SIGNAL_REAL'] == 'No comprar')])
@@ -163,7 +184,7 @@ if archivo_cargado is not None:
 
     # --- TAB 3: PRESCRIPTIVO ---
     with tab3:
-        st.markdown("#### Reglas de Decisión y Retorno Financiero")
+        st.markdown("#### Reglas Prescriptivas y Resultados Financieros")
         compras = df_filtrado[df_filtrado["SENAL_MODELO"] == "Comprar"]
         pnl_tot = compras["PNL_PER_SHARE"].sum() * 100
         pnl_unit = compras["PNL_PER_SHARE"].mean() if len(compras) > 0 else 0
@@ -176,7 +197,6 @@ if archivo_cargado is not None:
         pr3.metric("Tasa de Ganancia (Win Rate)", f"{win_r:.2f}%")
         pr4.metric("Capital Requerido", f"${cap_req:,.0f}")
 
-        # Agrupación por tramos de vencimiento
         def clasificar_vencimiento(d):
             if d <= 15: return "01. Corto (<= 15 d)"
             elif d <= 30: return "02. Medio-Corto (16-30 d)"
@@ -186,7 +206,7 @@ if archivo_cargado is not None:
         df_filtrado["TRAMO_DTE"] = df_filtrado["DTE"].apply(clasificar_vencimiento)
         resumen_dte = df_filtrado[df_filtrado["SENAL_MODELO"] == "Comprar"].groupby("TRAMO_DTE")["PNL_PER_SHARE"].sum() * 100
         
-        st.write("##### Rendimiento por Rango de Vencimiento (Regla Prescriptiva)")
+        st.write("##### Rendimiento por Rango de Vencimiento (Rango_DTE)")
         st.dataframe(resumen_dte.reset_index().rename(columns={"PNL_PER_SHARE": "PnL Acumulado ($)"}), use_container_width=True)
 
 else:
